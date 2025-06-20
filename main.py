@@ -268,6 +268,10 @@ async def preflight_handler(rest_of_path: str):
 async def test_cors():
     return Response(status_code=200)
 
+@app.options("/auth/register", include_in_schema=False)
+async def options_auth_register():
+    return Response(status_code=200)
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
