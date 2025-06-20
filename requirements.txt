@@ -30,4 +30,7 @@ pytest-asyncio==0.21.1
 
 # Added for Python 3.12+
 setuptools>=65.5.0
-wheel 
+wheel
+
+# Added for async PostgreSQL support
+asyncpg==0.29.0 
