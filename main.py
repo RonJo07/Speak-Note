@@ -34,7 +34,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://speak-now-live.vercel.app",  # <-- Updated to your actual Vercel domain
+        
+        "https://speak-note.vercel.app",  # Added new frontend domain
         "http://localhost:3000"
     ],
     allow_credentials=True,
