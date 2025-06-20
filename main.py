@@ -264,6 +264,10 @@ async def update_current_user(
 async def preflight_handler(rest_of_path: str):
     return Response(status_code=200)
 
+@app.options("/test-cors")
+async def test_cors():
+    return Response(status_code=200)
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
