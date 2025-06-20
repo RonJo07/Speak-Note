@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose the port (matches your Procfile)
-EXPOSE 8000
+EXPOSE 8080
 
 # Start the FastAPI app with Uvicorn (matches your Procfile)
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"] 
