@@ -750,13 +750,13 @@ async def test_database(db: AsyncSession = Depends(get_db)):
         from app.crud import get_user_by_email
         
         # Try to query the database
-        result = await db.execute("SELECT 1")
+        result = await db.execute(text("SELECT 1"))
         logger.info("Database query successful")
         
         # Test user table
         try:
             from app.models import User
-            result = await db.execute("SELECT COUNT(*) FROM users")
+            result = await db.execute(text("SELECT COUNT(*) FROM users"))
             count = result.scalar()
             logger.info(f"User table accessible, count: {count}")
         except Exception as table_error:
@@ -1026,6 +1026,65 @@ async def request_registration_otp_simple(email: EmailStr = Form(...), db: Async
         raise HTTPException(
             status_code=500, 
             detail=f"Simple registration OTP error: {str(e)}"
+        )
+
+@app.post("/add-missing-columns")
+async def add_missing_columns(db: AsyncSession = Depends(get_db)):
+    """Add missing columns to the users table"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("Adding missing columns to users table...")
+        
+        # Check if otp_expires_at column exists
+        result = await db.execute(text("""
+            SELECT COUNT(*) FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'otp_expires_at'
+        """))
+        otp_expires_exists = result.scalar() > 0
+        
+        if not otp_expires_exists:
+            logger.info("Adding otp_expires_at column...")
+            await db.execute(text("ALTER TABLE users ADD COLUMN otp_expires_at TIMESTAMP WITH TIME ZONE"))
+            logger.info("otp_expires_at column added successfully")
+        else:
+            logger.info("otp_expires_at column already exists")
+        
+        # Commit the changes
+        await db.commit()
+        logger.info("Column addition completed successfully!")
+        
+        # Verify the changes
+        logger.info("Verifying table structure...")
+        result = await db.execute(text("""
+            SELECT column_name, data_type, is_nullable
+            FROM information_schema.columns 
+            WHERE table_name = 'users' 
+            ORDER BY ordinal_position
+        """))
+        
+        columns = result.fetchall()
+        table_structure = []
+        for column in columns:
+            table_structure.append({
+                "column": column[0],
+                "type": column[1],
+                "nullable": column[2]
+            })
+        
+        return {
+            "message": "Missing columns added successfully!",
+            "table_structure": table_structure,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Column addition failed: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Column addition failed: {str(e)}"
         )
 
 if __name__ == "__main__":
