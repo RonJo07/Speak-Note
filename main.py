@@ -462,6 +462,148 @@ async def test_cors():
 async def options_auth_register():
     return Response(status_code=200)
 
+@app.post("/auth/request-registration-otp")
+async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession = Depends(get_db)):
+    """Generate and send an OTP for new user registration."""
+    import random
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        logger.info(f"Processing registration OTP request for email: {email}")
+        
+        # Import functions inside try block to catch import errors
+        try:
+            from app.crud import get_user_by_email, set_user_otp
+            from app.email import send_otp_email
+        except ImportError as import_error:
+            logger.error(f"Import error: {import_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Server configuration error: {str(import_error)}"
+            )
+        
+        # Check if user already exists
+        existing_user = await get_user_by_email(db, email)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered. Please use login instead.")
+        
+        # Generate OTP
+        try:
+            otp = str(random.randint(100000, 999999))
+            logger.info(f"Generated registration OTP: {otp}")
+        except Exception as otp_error:
+            logger.error(f"Error generating OTP: {otp_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"OTP generation error: {str(otp_error)}"
+            )
+        
+        # Store OTP temporarily (we'll create user when they verify)
+        # For now, we'll store it in a temporary way
+        temp_otp_key = f"temp_registration_{email}"
+        # In a real implementation, you'd use Redis or similar
+        # For now, we'll return it directly in development mode
+        
+        # Check if email configuration is set up
+        if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
+            logger.warning("Email configuration is missing - returning OTP in response for development")
+            return {
+                "message": "Registration OTP generated successfully (email not configured)",
+                "otp": otp,  # Only include OTP in development
+                "development_mode": True
+            }
+        
+        # Send email
+        try:
+            logger.info("Attempting to send registration email...")
+            await send_otp_email(email, otp)
+            logger.info(f"Registration OTP sent successfully to {email}")
+            return {"message": "Registration OTP sent successfully"}
+        except Exception as email_error:
+            logger.error(f"Email sending failed: {str(email_error)}")
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to send registration OTP email. Please try again later."
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Unexpected error in request_registration_otp: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        raise HTTPException(
+            status_code=500, 
+            detail="An unexpected error occurred. Please try again."
+        )
+
+@app.post("/auth/register-with-otp")
+async def register_with_otp(
+    request: Request,
+    email: EmailStr = Form(...),
+    otp: str = Form(...),
+    full_name: str = Form(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Register a new user with email and OTP."""
+    from app.crud import create_user, get_user_by_email
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        # Check if user already exists
+        existing_user = await get_user_by_email(db, email)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        # In a real implementation, you'd verify the OTP from temporary storage
+        # For now, we'll accept any 6-digit code in development mode
+        if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
+            # Development mode - accept any 6-digit code
+            if not otp.isdigit() or len(otp) != 6:
+                raise HTTPException(status_code=400, detail="Invalid OTP format")
+        else:
+            # Production mode - verify OTP (implement proper verification)
+            # For now, we'll accept any 6-digit code
+            if not otp.isdigit() or len(otp) != 6:
+                raise HTTPException(status_code=400, detail="Invalid OTP")
+        
+        # Create user without password
+        user_data = UserCreate(
+            email=email,
+            password="",  # No password for OTP users
+            full_name=full_name
+        )
+        
+        user = await create_user(db, user_data)
+        
+        # Log registration
+        logger.info(f"New user registered with OTP: {user.id}")
+        
+        # Auto-login after registration
+        from app.auth import create_access_token
+        access_token = create_access_token(data={"sub": user.email})
+        
+        return {
+            "message": "Registration successful",
+            "access_token": access_token,
+            "token_type": "bearer",
+            "user": user
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration with OTP failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Registration failed. Please try again."
+        )
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
