@@ -69,6 +69,30 @@ async def test_endpoint():
         "cors_enabled": True
     }
 
+@app.get("/debug/otp")
+async def debug_otp_endpoint():
+    """Debug endpoint to check OTP functionality"""
+    try:
+        from app.crud import get_user_by_email, set_user_otp
+        from app.email import send_otp_email
+        import random
+        
+        return {
+            "message": "OTP functions are available",
+            "email_config": {
+                "username_set": bool(settings.MAIL_USERNAME),
+                "password_set": bool(settings.MAIL_PASSWORD),
+                "server": settings.MAIL_SERVER
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "message": "OTP functions are NOT available",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.post("/auth/register", response_model=UserResponse)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """Register a new user"""
@@ -85,8 +109,6 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
 @app.post("/auth/request-login-otp")
 async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depends(get_db)):
     """Generate and send an OTP to the user's email."""
-    from app.crud import get_user_by_email, set_user_otp
-    from app.email import send_otp_email
     import random
     import logging
 
@@ -95,21 +117,55 @@ async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depe
     try:
         logger.info(f"Processing OTP request for email: {email}")
         
+        # Import functions inside try block to catch import errors
+        try:
+            from app.crud import get_user_by_email, set_user_otp
+            from app.email import send_otp_email
+        except ImportError as import_error:
+            logger.error(f"Import error: {import_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Server configuration error: {str(import_error)}"
+            )
+        
         # Check if email configuration is set up
         logger.info(f"Email config - Username: {bool(settings.MAIL_USERNAME)}, Password: {bool(settings.MAIL_PASSWORD)}")
         
-        user = await get_user_by_email(db, email)
-        if not user:
-            logger.warning(f"User not found for email: {email}")
-            raise HTTPException(status_code=404, detail="User not found")
+        # Get user
+        try:
+            user = await get_user_by_email(db, email)
+            if not user:
+                logger.warning(f"User not found for email: {email}")
+                raise HTTPException(status_code=404, detail="User not found")
+            logger.info(f"User found: {user.id}")
+        except Exception as user_error:
+            logger.error(f"Error getting user: {user_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Database error: {str(user_error)}"
+            )
 
-        logger.info(f"User found: {user.id}")
-
-        otp = str(random.randint(100000, 999999))
-        logger.info(f"Generated OTP: {otp}")
+        # Generate OTP
+        try:
+            otp = str(random.randint(100000, 999999))
+            logger.info(f"Generated OTP: {otp}")
+        except Exception as otp_error:
+            logger.error(f"Error generating OTP: {otp_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"OTP generation error: {str(otp_error)}"
+            )
         
-        await set_user_otp(db, user, otp)
-        logger.info("OTP saved to database")
+        # Save OTP to database
+        try:
+            await set_user_otp(db, user, otp)
+            logger.info("OTP saved to database")
+        except Exception as db_error:
+            logger.error(f"Error saving OTP to database: {db_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Database save error: {str(db_error)}"
+            )
         
         # Check if email configuration is set up
         if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
@@ -120,6 +176,7 @@ async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depe
                 "development_mode": True
             }
         
+        # Send email
         try:
             logger.info("Attempting to send email...")
             await send_otp_email(email, otp)
@@ -128,7 +185,10 @@ async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depe
         except Exception as email_error:
             logger.error(f"Email sending failed: {str(email_error)}")
             # Clear the OTP since email failed
-            await set_user_otp(db, user, None)
+            try:
+                await set_user_otp(db, user, None)
+            except:
+                pass  # Ignore errors when clearing OTP
             raise HTTPException(
                 status_code=500, 
                 detail="Failed to send OTP email. Please try again later."
