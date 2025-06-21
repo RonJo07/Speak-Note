@@ -12,6 +12,7 @@ import json
 from datetime import datetime, timedelta
 import asyncio
 from pydantic import EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import engine, get_db, create_tables
 from app.models import Base, Reminder, User
@@ -58,7 +59,7 @@ async def root():
     return {"message": "SpeakNote Remind API", "version": "1.0.0"}
 
 @app.post("/auth/register", response_model=UserResponse)
-async def register(user_data: UserCreate, db=Depends(get_db)):
+async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """Register a new user"""
     from app.crud import create_user, get_user_by_email
     
@@ -121,7 +122,7 @@ async def login(
     request: Request,
     email: str = Form(...), 
     password: str = Form(...), 
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Login user and return access token"""
     from app.crud import authenticate_user, create_login_history
@@ -221,18 +222,18 @@ async def analyze_image(
 async def create_reminder(
     reminder_data: ReminderCreate,
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Create a new reminder"""
-    from app.crud import create_reminder
+    from app.crud import create_reminder as crud_create_reminder
     
-    reminder = await create_reminder(db, reminder_data, current_user.id)
+    reminder = await crud_create_reminder(db, reminder_data, current_user.id)
     return reminder
 
 @app.get("/reminders", response_model=List[ReminderResponse])
 async def get_reminders(
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get all reminders for the current user"""
     from app.crud import get_user_reminders
@@ -244,9 +245,9 @@ async def get_reminders(
 async def get_reminder(
     reminder_id: int,
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    """Get a specific reminder"""
+    """Get a specific reminder by ID"""
     from app.crud import get_reminder_by_id
     
     reminder = await get_reminder_by_id(db, reminder_id, current_user.id)
@@ -259,12 +260,12 @@ async def update_reminder(
     reminder_id: int,
     reminder_data: ReminderCreate,
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Update a reminder"""
-    from app.crud import update_reminder_by_id
+    from app.crud import update_reminder as crud_update_reminder
     
-    reminder = await update_reminder_by_id(db, reminder_id, reminder_data, current_user.id)
+    reminder = await crud_update_reminder(db, reminder_id, reminder_data, current_user.id)
     if not reminder:
         raise HTTPException(status_code=404, detail="Reminder not found")
     return reminder
@@ -273,12 +274,12 @@ async def update_reminder(
 async def delete_reminder(
     reminder_id: int,
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Delete a reminder"""
-    from app.crud import delete_reminder_by_id
+    from app.crud import delete_reminder as crud_delete_reminder
     
-    success = await delete_reminder_by_id(db, reminder_id, current_user.id)
+    success = await crud_delete_reminder(db, reminder_id, current_user.id)
     if not success:
         raise HTTPException(status_code=404, detail="Reminder not found")
     return {"message": "Reminder deleted successfully"}
@@ -286,24 +287,24 @@ async def delete_reminder(
 @app.get("/reminders/upcoming", response_model=List[ReminderResponse])
 async def get_upcoming_reminders(
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Get upcoming reminders for the current user"""
-    from app.crud import get_upcoming_reminders
+    from app.crud import get_upcoming_reminders as crud_get_upcoming_reminders
     
-    reminders = await get_upcoming_reminders(db, current_user.id)
+    reminders = await crud_get_upcoming_reminders(db, current_user.id)
     return reminders
 
 @app.post("/reminders/{reminder_id}/complete", response_model=ReminderResponse)
 async def complete_reminder(
     reminder_id: int,
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Mark a reminder as completed"""
-    from app.crud import mark_reminder_completed
+    from app.crud import complete_reminder as crud_complete_reminder
     
-    reminder = await mark_reminder_completed(db, reminder_id, current_user.id)
+    reminder = await crud_complete_reminder(db, reminder_id, current_user.id)
     if not reminder:
         raise HTTPException(status_code=404, detail="Reminder not found")
     return reminder
@@ -312,7 +313,7 @@ async def complete_reminder(
 async def update_current_user(
     full_name: str = Body(..., embed=True),
     current_user: User = Depends(get_current_user),
-    db=Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
     """Update current user's profile (e.g., full name)"""
     current_user.full_name = full_name
