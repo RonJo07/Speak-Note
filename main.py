@@ -93,6 +93,31 @@ async def debug_otp_endpoint():
             "timestamp": datetime.now().isoformat()
         }
 
+@app.get("/debug/endpoints")
+async def debug_endpoints():
+    """Debug endpoint to check if all endpoints are available"""
+    try:
+        from app.crud import get_user_by_email, set_user_otp
+        from app.email import send_otp_email
+        import random
+        
+        return {
+            "message": "All endpoints are available",
+            "endpoints": [
+                "/auth/request-login-otp",
+                "/auth/login-with-otp", 
+                "/auth/request-registration-otp",
+                "/auth/register-with-otp"
+            ],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        return {
+            "message": "Some endpoints are NOT available",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
 @app.post("/auth/register", response_model=UserResponse)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """Register a new user"""
@@ -603,6 +628,43 @@ async def register_with_otp(
             status_code=500, 
             detail="Registration failed. Please try again."
         )
+
+@app.get("/test-registration-otp")
+async def test_registration_otp():
+    """Test endpoint to simulate registration OTP functionality"""
+    try:
+        import random
+        import logging
+        
+        logger = logging.getLogger(__name__)
+        
+        # Test email import
+        from app.email import send_otp_email
+        
+        # Test CRUD import
+        from app.crud import get_user_by_email, set_user_otp
+        
+        # Generate test OTP
+        otp = str(random.randint(100000, 999999))
+        
+        return {
+            "message": "Registration OTP test successful",
+            "test_otp": otp,
+            "email_config": {
+                "username_set": bool(settings.MAIL_USERNAME),
+                "password_set": bool(settings.MAIL_PASSWORD),
+                "server": settings.MAIL_SERVER
+            },
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        import traceback
+        return {
+            "message": "Registration OTP test failed",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "timestamp": datetime.now().isoformat()
+        }
 
 if __name__ == "__main__":
     uvicorn.run(
