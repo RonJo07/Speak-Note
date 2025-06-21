@@ -112,6 +112,11 @@ async def update_reminder_by_id(db: AsyncSession, reminder_id: int, reminder_dat
     await db.refresh(db_reminder)
     return db_reminder
 
+# Alias for main.py compatibility
+async def update_reminder(db: AsyncSession, reminder_id: int, reminder_data: ReminderCreate, user_id: int):
+    """Update a reminder (alias for update_reminder_by_id)"""
+    return await update_reminder_by_id(db, reminder_id, reminder_data, user_id)
+
 async def delete_reminder_by_id(db: AsyncSession, reminder_id: int, user_id: int):
     """Delete a reminder"""
     db_reminder = await get_reminder_by_id(db, reminder_id, user_id)
@@ -121,6 +126,11 @@ async def delete_reminder_by_id(db: AsyncSession, reminder_id: int, user_id: int
     await db.delete(db_reminder)
     await db.commit()
     return True
+
+# Alias for main.py compatibility
+async def delete_reminder(db: AsyncSession, reminder_id: int, user_id: int):
+    """Delete a reminder (alias for delete_reminder_by_id)"""
+    return await delete_reminder_by_id(db, reminder_id, user_id)
 
 async def get_upcoming_reminders(db: AsyncSession, user_id: int, days: int = 7):
     """Get upcoming reminders for the next N days"""
@@ -146,4 +156,20 @@ async def mark_reminder_completed(db: AsyncSession, reminder_id: int, user_id: i
     db_reminder.is_completed = True
     await db.commit()
     await db.refresh(db_reminder)
-    return db_reminder 
+    return db_reminder
+
+async def uncomplete_reminder(db: AsyncSession, reminder_id: int, user_id: int):
+    """Mark a reminder as uncompleted"""
+    db_reminder = await get_reminder_by_id(db, reminder_id, user_id)
+    if not db_reminder:
+        return None
+    
+    db_reminder.is_completed = False
+    await db.commit()
+    await db.refresh(db_reminder)
+    return db_reminder
+
+# Alias for main.py compatibility
+async def complete_reminder(db: AsyncSession, reminder_id: int, user_id: int):
+    """Mark a reminder as completed (alias for mark_reminder_completed)"""
+    return await mark_reminder_completed(db, reminder_id, user_id) 

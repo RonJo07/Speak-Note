@@ -38,6 +38,7 @@ app.add_middleware(
     allow_origins=[
         "https://speak-note.vercel.app",  # Production frontend
         "https://speaknote-remind-frontend.vercel.app",  # Alternative production domain
+        "https://speaknote-remind.vercel.app",  # Another possible domain
         "http://localhost:3000",  # Development frontend
         "http://127.0.0.1:3000"   # Alternative development
     ],
@@ -58,6 +59,15 @@ app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 @app.get("/")
 async def root():
     return {"message": "SpeakNote Remind API", "version": "1.0.0"}
+
+@app.get("/test")
+async def test_endpoint():
+    """Test endpoint to verify CORS and connectivity"""
+    return {
+        "message": "API is working",
+        "timestamp": datetime.now().isoformat(),
+        "cors_enabled": True
+    }
 
 @app.post("/auth/register", response_model=UserResponse)
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
@@ -83,12 +93,23 @@ async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depe
     logger = logging.getLogger(__name__)
 
     try:
+        logger.info(f"Processing OTP request for email: {email}")
+        
+        # Check if email configuration is set up
+        logger.info(f"Email config - Username: {bool(settings.MAIL_USERNAME)}, Password: {bool(settings.MAIL_PASSWORD)}")
+        
         user = await get_user_by_email(db, email)
         if not user:
+            logger.warning(f"User not found for email: {email}")
             raise HTTPException(status_code=404, detail="User not found")
 
+        logger.info(f"User found: {user.id}")
+
         otp = str(random.randint(100000, 999999))
+        logger.info(f"Generated OTP: {otp}")
+        
         await set_user_otp(db, user, otp)
+        logger.info("OTP saved to database")
         
         # Check if email configuration is set up
         if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
@@ -100,6 +121,7 @@ async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depe
             }
         
         try:
+            logger.info("Attempting to send email...")
             await send_otp_email(email, otp)
             logger.info(f"OTP sent successfully to {email}")
             return {"message": "OTP sent successfully"}
@@ -116,6 +138,9 @@ async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depe
         raise
     except Exception as e:
         logger.error(f"Unexpected error in request_login_otp: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500, 
             detail="An unexpected error occurred. Please try again."
@@ -334,6 +359,20 @@ async def complete_reminder(
     from app.crud import complete_reminder as crud_complete_reminder
     
     reminder = await crud_complete_reminder(db, reminder_id, current_user.id)
+    if not reminder:
+        raise HTTPException(status_code=404, detail="Reminder not found")
+    return reminder
+
+@app.post("/reminders/{reminder_id}/uncomplete", response_model=ReminderResponse)
+async def uncomplete_reminder(
+    reminder_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Mark a reminder as uncompleted"""
+    from app.crud import uncomplete_reminder as crud_uncomplete_reminder
+    
+    reminder = await crud_uncomplete_reminder(db, reminder_id, current_user.id)
     if not reminder:
         raise HTTPException(status_code=404, detail="Reminder not found")
     return reminder
