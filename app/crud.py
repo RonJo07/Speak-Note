@@ -13,11 +13,34 @@ async def get_user_by_email(db: AsyncSession, email: str):
 
 async def create_user(db: AsyncSession, user_data: UserCreate):
     """Create a new user"""
-    hashed_password = get_password_hash(user_data.password)
+    # Handle empty password for OTP users
+    if not user_data.password:
+        # Create user without password for OTP-based registration
+        db_user = User(
+            email=user_data.email,
+            hashed_password="",  # Empty string for OTP users
+            full_name=user_data.full_name
+        )
+    else:
+        # Create user with password
+        hashed_password = get_password_hash(user_data.password)
+        db_user = User(
+            email=user_data.email,
+            hashed_password=hashed_password,
+            full_name=user_data.full_name
+        )
+    
+    db.add(db_user)
+    await db.commit()
+    await db.refresh(db_user)
+    return db_user
+
+async def create_user_without_password(db: AsyncSession, email: str, full_name: str):
+    """Create a new user without password (for OTP-based registration)"""
     db_user = User(
-        email=user_data.email,
-        hashed_password=hashed_password,
-        full_name=user_data.full_name
+        email=email,
+        hashed_password="",  # Empty string for OTP users
+        full_name=full_name
     )
     db.add(db_user)
     await db.commit()
@@ -29,6 +52,11 @@ async def authenticate_user(db: AsyncSession, email: str, password: str):
     user = await get_user_by_email(db, email)
     if not user:
         return None
+    
+    # Check if user has a password (OTP-only users won't have hashed_password)
+    if not user.hashed_password:
+        return None  # User exists but has no password (OTP-only user)
+    
     if not verify_password(password, user.hashed_password):
         return None
     return user
