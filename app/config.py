@@ -24,11 +24,11 @@ class Settings(BaseSettings):
     SPACY_MODEL: str = "en_core_web_sm"
     
     # Email settings for OTP
-    MAIL_USERNAME: str
-    MAIL_PASSWORD: str
-    MAIL_FROM: EmailStr
+    MAIL_USERNAME: str = ""
+    MAIL_PASSWORD: str = ""
+    MAIL_FROM: str = ""
     MAIL_PORT: int = 587
-    MAIL_SERVER: str
+    MAIL_SERVER: str = "smtp.gmail.com"
     MAIL_STARTTLS: bool = True
     MAIL_SSL_TLS: bool = False
     

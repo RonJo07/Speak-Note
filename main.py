@@ -36,9 +36,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        
-        "https://speak-note.vercel.app",  # Added new frontend domain
-        "http://localhost:3000"
+        "https://speak-note.vercel.app",  # Production frontend
+        "https://speaknote-remind-frontend.vercel.app",  # Alternative production domain
+        "http://localhost:3000",  # Development frontend
+        "http://127.0.0.1:3000"   # Alternative development
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -77,20 +78,48 @@ async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depe
     from app.crud import get_user_by_email, set_user_otp
     from app.email import send_otp_email
     import random
+    import logging
 
-    user = await get_user_by_email(db, email)
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    logger = logging.getLogger(__name__)
 
-    otp = str(random.randint(100000, 999999))
-    await set_user_otp(db, user, otp)
-    
     try:
-        await send_otp_email(email, otp)
-        return {"message": "OTP sent successfully"}
+        user = await get_user_by_email(db, email)
+        if not user:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        otp = str(random.randint(100000, 999999))
+        await set_user_otp(db, user, otp)
+        
+        # Check if email configuration is set up
+        if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
+            logger.warning("Email configuration is missing - returning OTP in response for development")
+            return {
+                "message": "OTP generated successfully (email not configured)",
+                "otp": otp,  # Only include OTP in development
+                "development_mode": True
+            }
+        
+        try:
+            await send_otp_email(email, otp)
+            logger.info(f"OTP sent successfully to {email}")
+            return {"message": "OTP sent successfully"}
+        except Exception as email_error:
+            logger.error(f"Email sending failed: {str(email_error)}")
+            # Clear the OTP since email failed
+            await set_user_otp(db, user, None)
+            raise HTTPException(
+                status_code=500, 
+                detail="Failed to send OTP email. Please try again later."
+            )
+            
+    except HTTPException:
+        raise
     except Exception as e:
-        print(f"Error sending email: {e}")
-        raise HTTPException(status_code=500, detail="Failed to send OTP email.")
+        logger.error(f"Unexpected error in request_login_otp: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="An unexpected error occurred. Please try again."
+        )
 
 @app.post("/auth/login-with-otp")
 async def login_with_otp(
