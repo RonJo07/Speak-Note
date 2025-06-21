@@ -8,7 +8,7 @@ class UserBase(BaseModel):
     full_name: Optional[str] = None
 
 class UserCreate(UserBase):
-    password: str
+    password: Optional[str] = ""
 
 class UserResponse(UserBase):
     id: int

@@ -129,12 +129,17 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     
     try:
         logger.info(f"Registration attempt for email: {user_data.email}")
+        logger.info(f"Password provided: {bool(user_data.password)}")
+        logger.info(f"Full name: {user_data.full_name}")
         
         # Check if user already exists
         existing_user = await get_user_by_email(db, user_data.email)
         if existing_user:
+            logger.warning(f"Email already registered: {user_data.email}")
             raise HTTPException(status_code=400, detail="Email already registered")
         
+        # Create user
+        logger.info("Creating user...")
         user = await create_user(db, user_data)
         logger.info(f"User registered successfully: {user.id}")
         
@@ -143,6 +148,9 @@ async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
         raise
     except Exception as e:
         logger.error(f"Registration failed: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500, 
             detail="Registration failed. Please try again."
@@ -536,6 +544,7 @@ async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession
         try:
             from app.crud import get_user_by_email, set_user_otp
             from app.email import send_otp_email
+            logger.info("All imports successful")
         except ImportError as import_error:
             logger.error(f"Import error: {import_error}")
             raise HTTPException(
@@ -544,8 +553,10 @@ async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession
             )
         
         # Check if user already exists
+        logger.info("Checking if user already exists...")
         existing_user = await get_user_by_email(db, email)
         if existing_user:
+            logger.warning(f"Email already registered: {email}")
             raise HTTPException(status_code=400, detail="Email already registered. Please use login instead.")
         
         # Generate OTP
@@ -559,13 +570,8 @@ async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession
                 detail=f"OTP generation error: {str(otp_error)}"
             )
         
-        # Store OTP temporarily (we'll create user when they verify)
-        # For now, we'll store it in a temporary way
-        temp_otp_key = f"temp_registration_{email}"
-        # In a real implementation, you'd use Redis or similar
-        # For now, we'll return it directly in development mode
-        
         # Check if email configuration is set up
+        logger.info(f"Email config - Username: {bool(settings.MAIL_USERNAME)}, Password: {bool(settings.MAIL_PASSWORD)}")
         if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
             logger.warning("Email configuration is missing - returning OTP in response for development")
             return {
@@ -709,6 +715,49 @@ async def test_register_cors():
         "method": "POST",
         "endpoint": "/auth/register"
     }
+
+@app.get("/test-database")
+async def test_database(db: AsyncSession = Depends(get_db)):
+    """Test endpoint to verify database connectivity and basic operations"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("Testing database connectivity...")
+        
+        # Test basic database operations
+        from app.crud import get_user_by_email
+        
+        # Try to query the database
+        result = await db.execute("SELECT 1")
+        logger.info("Database query successful")
+        
+        # Test user table
+        try:
+            from app.models import User
+            result = await db.execute("SELECT COUNT(*) FROM users")
+            count = result.scalar()
+            logger.info(f"User table accessible, count: {count}")
+        except Exception as table_error:
+            logger.error(f"User table error: {table_error}")
+            return {
+                "message": "Database connected but user table has issues",
+                "error": str(table_error),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        return {
+            "message": "Database test successful",
+            "user_count": count,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Database test failed: {str(e)}")
+        return {
+            "message": "Database test failed",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
 
 if __name__ == "__main__":
     uvicorn.run(
