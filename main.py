@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import asyncio
 from pydantic import EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import text
 
 from app.database import engine, get_db, create_tables
 from app.models import Base, Reminder, User
@@ -540,6 +541,18 @@ async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession
     try:
         logger.info(f"Processing registration OTP request for email: {email}")
         
+        # Test database connection first
+        try:
+            logger.info("Testing database connection...")
+            result = await db.execute(text("SELECT 1"))
+            logger.info("Database connection successful")
+        except Exception as db_error:
+            logger.error(f"Database connection failed: {db_error}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Database connection error: {str(db_error)}"
+            )
+        
         # Import functions inside try block to catch import errors
         try:
             from app.crud import get_user_by_email, set_user_otp
@@ -553,11 +566,19 @@ async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession
             )
         
         # Check if user already exists
-        logger.info("Checking if user already exists...")
-        existing_user = await get_user_by_email(db, email)
-        if existing_user:
-            logger.warning(f"Email already registered: {email}")
-            raise HTTPException(status_code=400, detail="Email already registered. Please use login instead.")
+        try:
+            logger.info("Checking if user already exists...")
+            existing_user = await get_user_by_email(db, email)
+            if existing_user:
+                logger.warning(f"Email already registered: {email}")
+                raise HTTPException(status_code=400, detail="Email already registered. Please use login instead.")
+            logger.info("User does not exist, proceeding with registration OTP")
+        except Exception as user_check_error:
+            logger.error(f"Error checking user existence: {user_check_error}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"User check error: {str(user_check_error)}"
+            )
         
         # Generate OTP
         try:
@@ -755,6 +776,221 @@ async def test_database(db: AsyncSession = Depends(get_db)):
         logger.error(f"Database test failed: {str(e)}")
         return {
             "message": "Database test failed",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.post("/run-migration")
+async def run_migration_endpoint(db: AsyncSession = Depends(get_db)):
+    """Run database migration to fix hashed_password field"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("Starting database migration...")
+        
+        # Step 1: Update hashed_password to allow NULL
+        logger.info("Updating hashed_password column to allow NULL...")
+        await db.execute(text("ALTER TABLE users ALTER COLUMN hashed_password DROP NOT NULL"))
+        
+        # Step 2: Add OTP columns if they don't exist
+        logger.info("Checking for OTP columns...")
+        
+        # Check if otp column exists
+        result = await db.execute(text("""
+            SELECT COUNT(*) FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'otp'
+        """))
+        otp_exists = result.scalar() > 0
+        
+        if not otp_exists:
+            logger.info("Adding otp column...")
+            await db.execute(text("ALTER TABLE users ADD COLUMN otp VARCHAR"))
+        else:
+            logger.info("otp column already exists")
+        
+        # Check if otp_expires_at column exists
+        result = await db.execute(text("""
+            SELECT COUNT(*) FROM information_schema.columns 
+            WHERE table_name = 'users' AND column_name = 'otp_expires_at'
+        """))
+        otp_expires_exists = result.scalar() > 0
+        
+        if not otp_expires_exists:
+            logger.info("Adding otp_expires_at column...")
+            await db.execute(text("ALTER TABLE users ADD COLUMN otp_expires_at TIMESTAMP WITH TIME ZONE"))
+        else:
+            logger.info("otp_expires_at column already exists")
+        
+        # Commit the changes
+        await db.commit()
+        logger.info("Migration completed successfully!")
+        
+        # Verify the changes
+        logger.info("Verifying table structure...")
+        result = await db.execute(text("""
+            SELECT column_name, is_nullable, data_type
+            FROM information_schema.columns 
+            WHERE table_name = 'users' 
+            ORDER BY ordinal_position
+        """))
+        
+        columns = result.fetchall()
+        table_structure = []
+        for column in columns:
+            table_structure.append({
+                "column": column[0],
+                "type": column[2],
+                "nullable": column[1]
+            })
+        
+        return {
+            "message": "Migration completed successfully!",
+            "table_structure": table_structure,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Migration failed: {str(e)}")
+        await db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Migration failed: {str(e)}"
+        )
+
+@app.get("/test-crud")
+async def test_crud_operations(db: AsyncSession = Depends(get_db)):
+    """Test endpoint to verify CRUD operations"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("Testing CRUD operations...")
+        
+        # Test imports
+        try:
+            from app.crud import get_user_by_email, create_user
+            from app.schemas import UserCreate
+            logger.info("CRUD imports successful")
+        except Exception as import_error:
+            logger.error(f"CRUD import error: {import_error}")
+            return {
+                "message": "CRUD import failed",
+                "error": str(import_error),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Test database query
+        try:
+            result = await db.execute(text("SELECT COUNT(*) FROM users"))
+            count = result.scalar()
+            logger.info(f"User count query successful: {count}")
+        except Exception as query_error:
+            logger.error(f"Database query error: {query_error}")
+            return {
+                "message": "Database query failed",
+                "error": str(query_error),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Test get_user_by_email with non-existent email
+        try:
+            test_email = "test@example.com"
+            user = await get_user_by_email(db, test_email)
+            logger.info(f"get_user_by_email test successful, user: {user}")
+        except Exception as crud_error:
+            logger.error(f"get_user_by_email error: {crud_error}")
+            return {
+                "message": "get_user_by_email failed",
+                "error": str(crud_error),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        return {
+            "message": "CRUD operations test successful",
+            "user_count": count,
+            "get_user_test": "passed",
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"CRUD test failed: {str(e)}")
+        return {
+            "message": "CRUD test failed",
+            "error": str(e),
+            "timestamp": datetime.now().isoformat()
+        }
+
+@app.get("/test-user-model")
+async def test_user_model(db: AsyncSession = Depends(get_db)):
+    """Test endpoint to verify User model and database session"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info("Testing User model...")
+        
+        # Test User model import
+        try:
+            from app.models import User
+            logger.info("User model import successful")
+        except Exception as model_error:
+            logger.error(f"User model import error: {model_error}")
+            return {
+                "message": "User model import failed",
+                "error": str(model_error),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Test database session with User model
+        try:
+            result = await db.execute(text("SELECT * FROM users LIMIT 1"))
+            user_data = result.fetchone()
+            logger.info(f"User table query successful, found: {bool(user_data)}")
+        except Exception as session_error:
+            logger.error(f"Database session error: {session_error}")
+            return {
+                "message": "Database session failed",
+                "error": str(session_error),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Test table structure
+        try:
+            result = await db.execute(text("""
+                SELECT column_name, data_type, is_nullable 
+                FROM information_schema.columns 
+                WHERE table_name = 'users' 
+                ORDER BY ordinal_position
+            """))
+            columns = result.fetchall()
+            table_structure = []
+            for col in columns:
+                table_structure.append({
+                    "name": col[0],
+                    "type": col[1],
+                    "nullable": col[2]
+                })
+            logger.info(f"Table structure retrieved: {len(table_structure)} columns")
+        except Exception as structure_error:
+            logger.error(f"Table structure error: {structure_error}")
+            return {
+                "message": "Table structure check failed",
+                "error": str(structure_error),
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        return {
+            "message": "User model test successful",
+            "user_found": bool(user_data),
+            "table_structure": table_structure,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"User model test failed: {str(e)}")
+        return {
+            "message": "User model test failed",
             "error": str(e),
             "timestamp": datetime.now().isoformat()
         }
