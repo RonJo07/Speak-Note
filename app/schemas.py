@@ -66,4 +66,20 @@ class ImageAnalysisResult(BaseModel):
     text: str
     confidence: float
     image_url: str
-    scheduling_info: SchedulingInfo 
+    scheduling_info: SchedulingInfo
+
+# Login History Schemas
+class LoginHistoryBase(BaseModel):
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+
+class LoginHistoryCreate(LoginHistoryBase):
+    user_id: int
+
+class LoginHistoryResponse(LoginHistoryBase):
+    id: int
+    user_id: int
+    timestamp: datetime
+
+    class Config:
+        from_attributes = True 

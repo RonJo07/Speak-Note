@@ -280,8 +280,33 @@ async def extract_scheduling_info(text: str, user_timezone: str = None) -> Dict[
         if scheduling_info["detected_date"] and scheduling_info["detected_time"]:
             scheduling_info["confidence"] = min(1.0, scheduling_info["confidence"] + 0.2)
         
+        # Extract entities
+        entities = {
+            "dates": [],
+            "times": [],
+            "people": [ent.text for ent in doc.ents if ent.label_ == "PERSON"],
+            "places": [ent.text for ent in doc.ents if ent.label_ in ["GPE", "LOC"]]
+        }
+        
+        # Combine entities into title
+        title_parts = []
+        if scheduling_info["suggested_title"]:
+            title_parts.append(scheduling_info["suggested_title"])
+        if entities["people"]:
+            title_parts.append(f"with {', '.join(entities['people'])}")
+        if entities["places"]:
+            title_parts.append(f"at {', '.join(entities['places'])}")
+        
+        final_title = " ".join(title_parts) if title_parts else "Reminder"
+        
         print('DEBUG scheduling_info:', scheduling_info)
-        return scheduling_info
+        return {
+            "suggested_title": final_title,
+            "detected_date": scheduling_info["detected_date"],
+            "detected_time": scheduling_info["detected_time"],
+            "confidence": scheduling_info["confidence"],
+            "entities": entities
+        }
     
     except Exception as e:
         return {

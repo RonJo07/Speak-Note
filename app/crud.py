@@ -1,8 +1,8 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import and_, select
 from datetime import datetime, timedelta
-from app.models import User, Reminder
-from app.schemas import UserCreate, ReminderCreate
+from app.models import User, Reminder, LoginHistory
+from app.schemas import UserCreate, ReminderCreate, LoginHistoryCreate
 from app.auth import get_password_hash, verify_password
 
 # User CRUD operations
@@ -32,6 +32,44 @@ async def authenticate_user(db: AsyncSession, email: str, password: str):
     if not verify_password(password, user.hashed_password):
         return None
     return user
+
+async def set_user_otp(db: AsyncSession, user: User, otp: str):
+    """Set OTP for a user with a 10-minute expiration."""
+    user.otp = otp
+    user.otp_expires_at = datetime.utcnow() + timedelta(minutes=10)
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+async def verify_user_otp(db: AsyncSession, email: str, otp: str):
+    """Verify user's OTP."""
+    user = await get_user_by_email(db, email)
+    if not user or not user.otp or not user.otp_expires_at:
+        return None
+    
+    if user.otp_expires_at < datetime.utcnow():
+        # OTP has expired
+        return None
+    
+    if user.otp != otp:
+        return None
+        
+    # OTP is correct, clear it after use
+    user.otp = None
+    user.otp_expires_at = None
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return user
+
+async def create_login_history(db: AsyncSession, history_data: LoginHistoryCreate):
+    """Create a new login history record"""
+    db_history = LoginHistory(**history_data.dict())
+    db.add(db_history)
+    await db.commit()
+    await db.refresh(db_history)
+    return db_history
 
 # Reminder CRUD operations
 async def create_reminder(db: AsyncSession, reminder_data: ReminderCreate, user_id: int):

@@ -11,10 +11,11 @@ from typing import Optional, List
 import json
 from datetime import datetime, timedelta
 import asyncio
+from pydantic import EmailStr
 
 from app.database import engine, get_db, create_tables
 from app.models import Base, Reminder, User
-from app.schemas import ReminderCreate, ReminderResponse, UserCreate, UserResponse
+from app.schemas import ReminderCreate, ReminderResponse, UserCreate, UserResponse, LoginHistoryCreate
 from app.ai_analysis import (
     analyze_voice_input,
     analyze_text_input,
@@ -69,14 +70,73 @@ async def register(user_data: UserCreate, db=Depends(get_db)):
     user = await create_user(db, user_data)
     return user
 
+@app.post("/auth/request-login-otp")
+async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depends(get_db)):
+    """Generate and send an OTP to the user's email."""
+    from app.crud import get_user_by_email, set_user_otp
+    from app.email import send_otp_email
+    import random
+
+    user = await get_user_by_email(db, email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    otp = str(random.randint(100000, 999999))
+    await set_user_otp(db, user, otp)
+    
+    try:
+        await send_otp_email(email, otp)
+        return {"message": "OTP sent successfully"}
+    except Exception as e:
+        print(f"Error sending email: {e}")
+        raise HTTPException(status_code=500, detail="Failed to send OTP email.")
+
+@app.post("/auth/login-with-otp")
+async def login_with_otp(
+    request: Request,
+    email: EmailStr = Form(...),
+    otp: str = Form(...),
+    db: AsyncSession = Depends(get_db)
+):
+    """Login user with email and OTP and return access token."""
+    from app.crud import verify_user_otp, create_login_history
+
+    user = await verify_user_otp(db, email, otp)
+    if not user:
+        raise HTTPException(status_code=400, detail="Invalid or expired OTP")
+    
+    # Log login history
+    history_data = LoginHistoryCreate(
+        user_id=user.id,
+        ip_address=request.client.host,
+        user_agent=request.headers.get("user-agent")
+    )
+    await create_login_history(db, history_data)
+
+    access_token = create_access_token(data={"sub": user.email})
+    return {"access_token": access_token, "token_type": "bearer"}
+
 @app.post("/auth/login")
-async def login(email: str = Form(...), password: str = Form(...), db=Depends(get_db)):
+async def login(
+    request: Request,
+    email: str = Form(...), 
+    password: str = Form(...), 
+    db=Depends(get_db)
+):
     """Login user and return access token"""
-    from app.crud import authenticate_user
+    from app.crud import authenticate_user, create_login_history
     
     user = await authenticate_user(db, email, password)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    # Log login history
+    history_data = LoginHistoryCreate(
+        user_id=user.id,
+        ip_address=request.client.host,
+        user_agent=request.headers.get("user-agent")
+    )
+    await create_login_history(db, history_data)
     
     access_token = create_access_token(data={"sub": user.email})
     return {"access_token": access_token, "token_type": "bearer"}

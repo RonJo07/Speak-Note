@@ -13,6 +13,10 @@ class User(Base):
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
+    # Fields for OTP
+    otp = Column(String, nullable=True)
+    otp_expires_at = Column(DateTime(timezone=True), nullable=True)
+
     # Relationship
     reminders = relationship("Reminder", back_populates="user")
 
@@ -40,4 +44,15 @@ class Reminder(Base):
     # Relationship
     user = relationship("User", back_populates="reminders")
 
-    timezone = Column(String, nullable=True)  # User's timezone (IANA string) 
+    timezone = Column(String, nullable=True)  # User's timezone (IANA string)
+
+class LoginHistory(Base):
+    __tablename__ = "login_history"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+
+    user = relationship("User") 
