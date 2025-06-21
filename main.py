@@ -43,8 +43,9 @@ app.add_middleware(
         "http://127.0.0.1:3000"   # Alternative development
     ],
     allow_credentials=True,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Initialize database on startup
@@ -122,14 +123,30 @@ async def debug_endpoints():
 async def register(user_data: UserCreate, db: AsyncSession = Depends(get_db)):
     """Register a new user"""
     from app.crud import create_user, get_user_by_email
+    import logging
     
-    # Check if user already exists
-    existing_user = await get_user_by_email(db, user_data.email)
-    if existing_user:
-        raise HTTPException(status_code=400, detail="Email already registered")
+    logger = logging.getLogger(__name__)
     
-    user = await create_user(db, user_data)
-    return user
+    try:
+        logger.info(f"Registration attempt for email: {user_data.email}")
+        
+        # Check if user already exists
+        existing_user = await get_user_by_email(db, user_data.email)
+        if existing_user:
+            raise HTTPException(status_code=400, detail="Email already registered")
+        
+        user = await create_user(db, user_data)
+        logger.info(f"User registered successfully: {user.id}")
+        
+        return user
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Registration failed: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail="Registration failed. Please try again."
+        )
 
 @app.post("/auth/request-login-otp")
 async def request_login_otp(email: EmailStr = Form(...), db: AsyncSession = Depends(get_db)):
@@ -481,11 +498,28 @@ async def preflight_handler(rest_of_path: str):
 
 @app.options("/test-cors")
 async def test_cors():
-    return Response(status_code=200)
+    """Test endpoint to verify CORS and connectivity"""
+    return {
+        "message": "API is working",
+        "timestamp": datetime.now().isoformat(),
+        "cors_enabled": True,
+        "allowed_origins": [
+            "https://speak-note.vercel.app",
+            "http://localhost:3000"
+        ]
+    }
 
 @app.options("/auth/register", include_in_schema=False)
 async def options_auth_register():
-    return Response(status_code=200)
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "https://speak-note.vercel.app",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
 
 @app.post("/auth/request-registration-otp")
 async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession = Depends(get_db)):
@@ -665,6 +699,16 @@ async def test_registration_otp():
             "traceback": traceback.format_exc(),
             "timestamp": datetime.now().isoformat()
         }
+
+@app.post("/test-register-cors")
+async def test_register_cors():
+    """Test endpoint to verify CORS specifically for register endpoint"""
+    return {
+        "message": "Register CORS test successful",
+        "timestamp": datetime.now().isoformat(),
+        "method": "POST",
+        "endpoint": "/auth/register"
+    }
 
 if __name__ == "__main__":
     uvicorn.run(
