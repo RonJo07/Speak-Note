@@ -995,6 +995,39 @@ async def test_user_model(db: AsyncSession = Depends(get_db)):
             "timestamp": datetime.now().isoformat()
         }
 
+@app.post("/auth/request-registration-otp-simple")
+async def request_registration_otp_simple(email: EmailStr = Form(...), db: AsyncSession = Depends(get_db)):
+    """Simplified registration OTP endpoint for testing"""
+    import random
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        logger.info(f"Simple registration OTP request for email: {email}")
+        
+        # Skip user existence check for now
+        logger.info("Skipping user existence check...")
+        
+        # Generate OTP
+        otp = str(random.randint(100000, 999999))
+        logger.info(f"Generated OTP: {otp}")
+        
+        # Return OTP directly (development mode)
+        return {
+            "message": "Registration OTP generated successfully (simple mode)",
+            "otp": otp,
+            "development_mode": True,
+            "email": email
+        }
+            
+    except Exception as e:
+        logger.error(f"Simple registration OTP error: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Simple registration OTP error: {str(e)}"
+        )
+
 if __name__ == "__main__":
     uvicorn.run(
         "main:app",
