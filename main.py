@@ -591,6 +591,34 @@ async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession
                 detail=f"OTP generation error: {str(otp_error)}"
             )
         
+        # Store OTP temporarily in database for registration verification
+        try:
+            logger.info("Storing registration OTP temporarily...")
+            # Create a temporary user record with OTP for registration
+            from app.models import User
+            from datetime import datetime, timedelta
+            
+            temp_user = User(
+                email=email,
+                hashed_password="",  # Will be set during actual registration
+                full_name="",  # Will be set during actual registration
+                otp=otp,
+                otp_expires_at=datetime.utcnow() + timedelta(minutes=10)
+            )
+            
+            db.add(temp_user)
+            await db.commit()
+            await db.refresh(temp_user)
+            logger.info(f"Registration OTP stored for email: {email}")
+            
+        except Exception as store_error:
+            logger.error(f"Error storing registration OTP: {store_error}")
+            await db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail=f"OTP storage error: {str(store_error)}"
+            )
+        
         # Check if email configuration is set up
         logger.info(f"Email config - Username: {bool(settings.MAIL_USERNAME)}, Password: {bool(settings.MAIL_PASSWORD)}")
         if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
@@ -609,6 +637,12 @@ async def request_registration_otp(email: EmailStr = Form(...), db: AsyncSession
             return {"message": "Registration OTP sent successfully"}
         except Exception as email_error:
             logger.error(f"Email sending failed: {str(email_error)}")
+            # Clean up the temporary user if email fails
+            try:
+                await db.delete(temp_user)
+                await db.commit()
+            except:
+                pass
             raise HTTPException(
                 status_code=500, 
                 detail="Failed to send registration OTP email. Please try again later."
@@ -635,56 +669,103 @@ async def register_with_otp(
     db: AsyncSession = Depends(get_db)
 ):
     """Register a new user with email and OTP."""
-    from app.crud import create_user, get_user_by_email
+    from app.crud import get_user_by_email
     import logging
 
     logger = logging.getLogger(__name__)
 
     try:
-        # Check if user already exists
+        logger.info(f"Processing registration with OTP for email: {email}")
+        
+        # Check if user already exists (permanent user)
         existing_user = await get_user_by_email(db, email)
-        if existing_user:
+        if existing_user and existing_user.full_name:  # If user has full_name, they're already registered
+            logger.warning(f"Email already registered: {email}")
             raise HTTPException(status_code=400, detail="Email already registered")
         
-        # In a real implementation, you'd verify the OTP from temporary storage
-        # For now, we'll accept any 6-digit code in development mode
-        if not settings.MAIL_USERNAME or not settings.MAIL_PASSWORD:
-            # Development mode - accept any 6-digit code
-            if not otp.isdigit() or len(otp) != 6:
-                raise HTTPException(status_code=400, detail="Invalid OTP format")
-        else:
-            # Production mode - verify OTP (implement proper verification)
-            # For now, we'll accept any 6-digit code
-            if not otp.isdigit() or len(otp) != 6:
-                raise HTTPException(status_code=400, detail="Invalid OTP")
+        # Check if there's a temporary user with OTP
+        from app.models import User
+        from datetime import datetime
         
-        # Create user without password
-        user_data = UserCreate(
-            email=email,
-            password="",  # No password for OTP users
-            full_name=full_name
+        # Look for temporary user (with empty full_name and hashed_password)
+        result = await db.execute(text("""
+            SELECT * FROM users 
+            WHERE email = :email 
+            AND (full_name = '' OR full_name IS NULL)
+            AND (hashed_password = '' OR hashed_password IS NULL)
+        """), {"email": email})
+        
+        temp_user = result.fetchone()
+        
+        if not temp_user:
+            logger.error(f"No temporary user found for email: {email}")
+            raise HTTPException(status_code=400, detail="No registration OTP found. Please request a new OTP.")
+        
+        # Convert to User object for easier handling
+        temp_user_obj = User(
+            id=temp_user[0],
+            email=temp_user[1],
+            hashed_password=temp_user[2],
+            full_name=temp_user[3],
+            created_at=temp_user[4],
+            updated_at=temp_user[5],
+            otp=temp_user[6],
+            otp_expires_at=temp_user[7]
         )
         
-        user = await create_user(db, user_data)
+        # Verify OTP
+        if not temp_user_obj.otp or not temp_user_obj.otp_expires_at:
+            logger.error(f"No OTP found for email: {email}")
+            raise HTTPException(status_code=400, detail="No OTP found. Please request a new OTP.")
         
-        # Log registration
-        logger.info(f"New user registered with OTP: {user.id}")
+        if temp_user_obj.otp_expires_at < datetime.utcnow():
+            logger.error(f"OTP expired for email: {email}")
+            # Clean up expired temporary user
+            await db.delete(temp_user_obj)
+            await db.commit()
+            raise HTTPException(status_code=400, detail="OTP has expired. Please request a new OTP.")
+        
+        if temp_user_obj.otp != otp:
+            logger.error(f"Invalid OTP for email: {email}")
+            raise HTTPException(status_code=400, detail="Invalid OTP. Please try again.")
+        
+        # OTP is valid, complete the registration
+        logger.info(f"OTP verified, completing registration for email: {email}")
+        
+        # Update the temporary user with actual registration data
+        temp_user_obj.full_name = full_name
+        temp_user_obj.otp = None  # Clear OTP after use
+        temp_user_obj.otp_expires_at = None
+        
+        db.add(temp_user_obj)
+        await db.commit()
+        await db.refresh(temp_user_obj)
+        
+        logger.info(f"User registration completed: {temp_user_obj.id}")
         
         # Auto-login after registration
         from app.auth import create_access_token
-        access_token = create_access_token(data={"sub": user.email})
+        access_token = create_access_token(data={"sub": temp_user_obj.email})
         
         return {
             "message": "Registration successful",
             "access_token": access_token,
             "token_type": "bearer",
-            "user": user
+            "user": {
+                "id": temp_user_obj.id,
+                "email": temp_user_obj.email,
+                "full_name": temp_user_obj.full_name,
+                "created_at": temp_user_obj.created_at
+            }
         }
         
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"Registration with OTP failed: {str(e)}")
+        logger.error(f"Error type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
         raise HTTPException(
             status_code=500, 
             detail="Registration failed. Please try again."
